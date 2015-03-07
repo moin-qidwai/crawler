@@ -43,6 +43,21 @@ function perfect_url($u, $b) {
 }
 
 function crawl_site($u, $type = "") {
+
+	$servername = "localhost";
+	$username = "root";
+	$password = "";
+	try {
+	    $conn = new PDO("mysql:host=$servername;dbname=yelpc", $username, $password);
+	    // set the PDO error mode to exception
+	    $conn->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+	    //echo "Connected successfully"; 
+	    }
+	catch(PDOException $e)
+	    {
+	    echo "Connection failed: " . $e->getMessage();
+	    }
+
 	global $crawled_urls, $found_urls;
 	$links = array();
 	$uen = urlencode($u);
@@ -62,9 +77,7 @@ function crawl_site($u, $type = "") {
 						$enurl = urlencode($url);
 						if ($url != '' && substr($url, 0, 4) != "mail" && substr($url, 0, 4) != "java" && array_key_exists($enurl, $found_urls) == 0) {
 							$found_urls[$enurl] = 1;
-							
 							array_push($links, $url);
-							
 						}
 					}
 				}
@@ -113,33 +126,89 @@ function crawl_site($u, $type = "") {
 						if ($url != '' && substr($url, 0, 4) != "mail" && substr($url, 0, 4) != "java" && array_key_exists($enurl, $found_urls) == 0) {
 							$found_urls[$enurl] = 1;
 							
-							if(strpos($url, "/biz/"))
-								file_put_contents("output.txt",$url."\r\n",FILE_APPEND);
+							array_push($links, $url);
 						}
 					}
 				}
 			}
 		}
-		if ($type == "last") {
+		if ($type == "secondlast") {
 			if($html)
 			{
-				foreach ($html->find("a") as $li) {
-					$url = perfect_url($li->href, $u);
-					$enurl = urlencode($url);
-					if ($url != '' && substr($url, 0, 4) != "mail" && substr($url, 0, 4) != "java" && array_key_exists($enurl, $found_urls) == 0) {
-						$found_urls[$enurl] = 1;
-						
-						if(strpos($url, "/biz/"))	
-							file_put_contents("output.txt",$url."\r\n",FILE_APPEND);
+				if($html->find('[itemprop="postalCode"]') && $html->find('[itemprop="name"]') && $html->find('[itemprop="streetAddress"]') && $html->find('[itemprop="addressLocality"]') && $html->find('[itemprop="addressRegion"]'))
+				{
+					$center = $html->find('[data-map-state]')[0]->{'data-map-state'};
+					$center = get_string_between($center, "center", "}");
+					$latitude = get_string_between($center, "latitude", ",");
+					$latitude = substr($latitude, strpos($latitude, ":") + 1);
+					$longitude = substr($center, strpos($center, "longitude") + 1);
+					$longitude = substr($longitude, strpos($longitude, ":") + 1);
+					$statement = $conn->prepare("INSERT INTO address(name, address, city, state, postal, lat, lon) VALUES(:name, :address, :city, :state, :postal, :lat, :lon)");
+					$statement->execute(array(
+						"name" => $html->find('[itemprop="name"]')[0]->innertext,
+						"address" => $html->find('[itemprop="streetAddress"]')[0]->innertext,
+						"city" => $html->find('[itemprop="addressLocality"]')[0]->innertext,
+						"state" => $html->find('[itemprop="addressRegion"]')[0]->innertext,
+						"postal" => $html->find('[itemprop="postalCode"]')[0]->innertext,
+						"lat" => $latitude,
+						"lon" => $longitude
+					));
+				}
+				else
+				{
+					foreach ($html->find("a") as $li) {
+						$url = perfect_url($li->href, $u);
+						$enurl = urlencode($url);
+						if ($url != '' && substr($url, 0, 4) != "mail" && substr($url, 0, 4) != "java" && array_key_exists($enurl, $found_urls) == 0) {
+							$found_urls[$enurl] = 1;
+							
+							if(strpos($url, "/biz/"))	
+								array_push($links, $url);
+						}
 					}
 				}
 			}
 		}
+		if($type == "last")
+		{
+			if($html)
+			{
+				if($html->find('[itemprop="postalCode"]') && $html->find('[itemprop="name"]') && $html->find('[itemprop="streetAddress"]') && $html->find('[itemprop="addressLocality"]') && $html->find('[itemprop="addressRegion"]'))
+				{
+					
+					$center = $html->find('[data-map-state]')[0]->{'data-map-state'};
+					$center = get_string_between($center, "center", "}");
+					$latitude = get_string_between($center, "latitude", ",");
+					$latitude = substr($latitude, strpos($latitude, ":") + 1);
+					$longitude = substr($center, strpos($center, "longitude") + 1);
+					$longitude = substr($longitude, strpos($longitude, ":") + 1);
+					$statement = $conn->prepare("INSERT INTO address(name, address, city, state, postal, lat, lon) VALUES(:name, :address, :city, :state, :postal, :lat, :lon)");
+					$statement->execute(array(
+						"name" => $html->find('[itemprop="name"]')[0]->innertext,
+						"address" => $html->find('[itemprop="streetAddress"]')[0]->innertext,
+						"city" => $html->find('[itemprop="addressLocality"]')[0]->innertext,
+						"state" => $html->find('[itemprop="addressRegion"]')[0]->innertext,
+						"postal" => $html->find('[itemprop="postalCode"]')[0]->innertext,
+						"lat" => $latitude,
+						"lon" => $longitude
+					));
+				}
+			}
+		}
 	}
+	$conn= null;
 	return $links;
 }
 
-$citylinks = crawl_site("http://www.yelp.com/locations", "loc");
+function get_string_between($string, $start, $end){
+    $string = " ".$string;
+    $ini = strpos($string,$start);
+    if ($ini == 0) return "";
+    $ini += strlen($start);
+    $len = strpos($string,$end,$ini) - $ini;
+    return substr($string,$ini,$len);
+}
+
 
 class AsyncOperation extends Thread {
 
@@ -152,17 +221,43 @@ class AsyncOperation extends Thread {
             $ablist = crawl_site($this->arg, "ablist");
 			foreach ($ablist as $abvalue) {
 				$listing = crawl_site($abvalue, "listing");
-				foreach ($listing as $list) {
-					$last = crawl_site($list, "last");
-					
+				if($listing !== NULL)
+				{
+					$tt = new secondStage($listing);
+					$tt->start();
 				}
 			}
         }
     }
 }
 
-foreach ($citylinks as $value) {
-	$t = new AsyncOperation($value);
-	$t->start();
+class secondStage extends Thread {
+
+    public function __construct($arg) {
+        $this->arg = $arg;
+    }
+
+    public function run() {
+        if ($this->arg) {
+            foreach ($this->arg as $value) {
+            	$last = crawl_site($value, "secondlast");
+            	foreach ($last as $links) {
+            		crawl_site($value, "last");
+            	}
+            }
+        }
+    }
 }
 
+$citylinks = crawl_site("http://www.yelp.com/locations", "loc");
+
+$t = array();
+
+foreach ($citylinks as $value) {
+	$t[] = new AsyncOperation($value);
+}
+
+foreach ($t as $thread) {
+	$thread->start();
+}
+?>
